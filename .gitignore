@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+env/
+.venv/
+yoloenv/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# API keys / secrets
+config.py
+secrets.py
+credentials.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Jupyter
+.ipynb_checkpoints/
+
+# YOLO generated files
+runs/
+wandb/
+
+# Large/generated files
+*.csv
