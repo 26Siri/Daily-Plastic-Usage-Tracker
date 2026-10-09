@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Daily Plastic Usage Tracker</title>
+
+  <!-- ✅ Google Sign-In -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <!-- ✅ Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- ✅ Google Maps API -->
+  <!-- Google Maps is loaded dynamically so the key can be configured.
+       The loader will prefer `window.MAPS_API_KEY` (from `config.js`) then localStorage then a default. -->
+  <script src="./config.js"></script>
+  <script>
+    (function(){
+      try {
+        const DEFAULT_KEY = 'AIzaSyBhxsfLwKc-0_Z95J7gO0GHhLN-Pp4Byt4';
+        const CONFIG_KEY = (typeof window !== 'undefined' && window.MAPS_API_KEY) ? window.MAPS_API_KEY : null;
+        const MAPS_API_KEY = CONFIG_KEY || localStorage.getItem('MAPS_API_KEY') || DEFAULT_KEY;
+        const url = `https://maps.googleapis.com/maps/api/js?key=${MAPS_API_KEY}&libraries=places`;
+        const s = document.createElement('script');
+        s.src = url;
+        s.async = true; s.defer = true;
+        s.onerror = function(){
+          console.error('Google Maps script failed to load (network or blocked).');
+          window._gm_load_error = true;
+        };
+        document.head.appendChild(s);
+
+        // Called by Maps API when auth fails (invalid key / billing / referer restrictions)
+        window.gm_authFailure = function(){
+          console.error('Google Maps authentication failure (gm_authFailure called).');
+          window._gm_auth_failure = true;
+        };
+      } catch (e) {
+        console.error('Failed to inject Google Maps script', e);
+        window._gm_inject_error = true;
+      }
+    })();
+  </script>
+
+  <style>
+    * { box-sizing: border-box; font-family: "Segoe UI", sans-serif; }
+    body { margin: 0; background: linear-gradient(135deg, #a8edea, #fed6e3); min-height: 100vh; display: flex; justify-content: center; align-items: center; }
+    .container { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 6px 12px rgba(0,0,0,0.2); width: 360px; text-align: center; }
+    h2 { margin-bottom: 15px; color: #00796b; }
+    input, select, button { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ccc; border-radius: 10px; }
+    button { background: #00796b; color: white; border: none; cursor: pointer; transition: 0.3s; }
+    button:hover { background: #004d40; }
+    #dashboard { display: none; flex-direction: column; width: 100%; min-height: 100vh; }
+    header { background: #00796b; color: white; text-align: center; padding: 20px; border-bottom-left-radius: 30px; border-bottom-right-radius: 30px; }
+    main { flex: 1; padding: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    section { background: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+    #logList { list-style: none; padding: 0; }
+    #logList li { background: #e0f2f1; padding: 8px; margin: 5px 0; border-radius: 8px; display: flex; align-items: center; gap: 10px; }
+    #logList img { width: 50px; height: 50px; object-fit: cover; border-radius: 8px; border: 1px solid #ccc; }
+    footer { background: #004d40; color: white; text-align: center; padding: 15px; grid-column: span 2; }
+    #logoutBtn { background: #ff5252; color: white; border: none; padding: 10px 20px; border-radius: 10px; cursor: pointer; font-size: 1em; margin-bottom: 10px; display: block; width: 150px; margin: 0 auto 10px; }
+    #logoutBtn:hover { background: #c62828; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    th { background: #e0f2f1; }
+    .switch-link { color: #00796bf6; text-decoration: underline; cursor: pointer; font-size: 0.9em; margin-top: 10px; display: inline-block; }
+    #reactionEmoji { font-size: 2.6rem; line-height: 1; vertical-align: middle; display:inline-block; }
+    #reactionText { font-size: 0.95rem; vertical-align: middle; margin-left: 8px; display:inline-block; }
+    @keyframes popScale { 0% { transform: scale(0.6); opacity: 0; } 60% { transform: scale(1.25); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+    .pop { animation: popScale 520ms cubic-bezier(.2,.9,.2,1); transform-origin: center center; will-change: transform, opacity; }
+    @keyframes popText { 0% { transform: translateY(6px); opacity: 0; } 60% { transform: translateY(-2px); opacity: 1; } 100% { transform: translateY(0); opacity: 1; } }
+    .pop-text { animation: popText 520ms cubic-bezier(.2,.9,.2,1); will-change: transform, opacity; }
+    #reactionEmoji.badge { display: inline-block; padding: 6px 10px; border-radius: 999px; background: rgb(255, 255, 255); box-shadow: 0 4px 10px rgba(0,0,0,0.06); }
+    #reactionEmoji.badge-success { background: linear-gradient(135deg,#f0fff4,#e6fbec); }
+    #reactionEmoji.badge-good { background: linear-gradient(135deg,#f6fff7,#eefef0); }
+    #reactionEmoji.badge-info { background: linear-gradient(135deg,#fffaf0,#fff6e8); }
+    #reactionEmoji.badge-warning { background: linear-gradient(135deg,#fff7f0,#fff2e8); }
+    #reactionEmoji.badge-danger { background: linear-gradient(135deg,#fff2f2,#ffecec); }
+    .text-success { color: #2e7d32; }
+    .text-good { color: #2e8b57; }
+    .text-info { color: #a67c00; }
+    .text-warning { color: #b35f00; }
+    .text-danger { color: #ff0606; }
+    /* Recycle results styling */
+    #recycleResults ul { margin: 0; padding: 0; }
+    #recycleResults li { padding: 10px; border-radius: 8px; background: #fff; margin-bottom: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
+    #recycleResults .actions { margin-top: 8px; display:flex; gap:8px; align-items:center; }
+    .btn-small { padding:6px 10px; border-radius:8px; border:1px solid #00796b; background:#00796b; color:#fff; cursor:pointer; font-size:0.9rem }
+    .btn-ghost { background:transparent; color:#00796b; border:1px dashed #00796b }
+    .spinner { width:18px; height:18px; border:3px solid rgba(0,0,0,0.08); border-top-color:#00796b; border-radius:50%; animation:spin 800ms linear infinite; display:inline-block; vertical-align:middle }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    /* Modal for API key help */
+    .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.4); display:flex; align-items:center; justify-content:center; z-index:1200; }
+    .modal { background:#fff; padding:18px; border-radius:12px; width:360px; box-shadow:0 8px 24px rgba(0,0,0,0.2); }
+    .modal h3 { margin-top:0; color:#00796b }
+    .modal .muted { font-size:0.9rem; color:#555 }
+    .modal input[type="text"] { width:100%; padding:8px; margin-top:8px; border:1px solid #ccc; border-radius:8px }
+    .modal .row { display:flex; gap:8px; margin-top:12px }
+    .modal .row button { flex:1 }
+
+  </style>
+</head>
+<body>
+
+  <!-- 🔐 Login/Register Page -->
+  <div id="authPage" class="container">
+    <h2 id="authTitle">🔑 Login</h2>
+    <div id="registerFields" style="display:none;">
+      <input type="text" id="regName" placeholder="Enter Name">
+    </div>
+    <input type="email" id="authEmail" placeholder="Enter Gmail ID" required>
+    <input type="password" id="authPassword" placeholder="Enter Password" required>
+    <button id="authButton" onclick="handleAuth()">Login</button>
+
+    <!-- ✅ Google Sign-In -->
+    <div id="g_id_onload"
+      data-client_id="96757927856-1igd01nt3kuqukmg8b7lipkbkjgf3eed.apps.googleusercontent.com"
+      data-callback="handleCredentialResponse"
+      data-auto_prompt="false">
+    </div>
+
+    <div class="g_id_signin" 
+      data-type="standard"
+      data-shape="rectangular"
+      data-theme="outline"
+      data-text="signin_with"
+      data-size="large"
+      data-logo_alignment="left">
+    </div>
+
+    <span class="switch-link" onclick="toggleAuth()">Don't have an account? Register</span>
+  </div>
+
+  <!-- 📊 Dashboard -->
+  <div id="dashboard">
+    <header>
+      <h1>🌍 Daily Plastic Usage Tracker</h1>
+      <p id="welcomeText"></p>
+    </header>
+
+    <main>
+      <section class="tracker-form">
+        <h2>Add Today’s Usage</h2>
+        <form id="usageForm">
+          <label>Plastic Item:</label>
+          <div id="itemWrapper" style="position: relative;">
+            <select id="item" onchange="makeEditable(this)" required>
+              <option value="">-- Select Item --</option>
+              <option value="Bottle">Bottle</option>
+              <option value="Bag">Bag</option>
+              <option value="Cup">Cup</option>
+              <option value="Straw">Straw</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+
+          <label>Quantity:</label>
+          <input type="number" id="quantity" min="1" placeholder="Enter quantity" required>
+
+          <label>Date:</label>
+          <input type="text" id="date" readonly>
+
+          <label>Upload Image:</label>
+          <input type="file" id="image" accept="image/*">
+          
+          <button type="button" id="detectBtn" style="width: 100%; margin-top: 8px; background: #4caf50; color: white; border: none; padding: 10px; border-radius: 10px; cursor: pointer;">
+            🔍 Detect Plastic Items
+          </button>
+
+          <button type="submit">➕ Add Usage</button>
+        </form>
+        
+        <!-- Detection Results Display -->
+        <div id="detectionResults" style="margin-top: 15px; display: none;">
+          <h3 style="margin: 10px 0 5px 0; color: #00796b; font-size: 1.1em;">🔍 Detection Results</h3>
+          <div id="detectionContent" style="background: #f0f7f6; padding: 12px; border-radius: 8px; border: 1px solid #b2dfdb; min-height: 50px;"></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>📋 Today’s Log</h2>
+        <table id="logTable">
+          <thead>
+            <tr>
+              <th style="border:1px solid #ccc;padding:6px;text-align:left">Item</th>
+              <th style="border:1px solid #ccc;padding:6px;text-align:center">Quantity</th>
+            </tr>
+          </thead>
+          <tbody id="logBody"></tbody>
+          <tfoot>
+            <tr>
+              <td style="border-top:1px solid #ccc;padding:6px"><strong>Total</strong></td>
+              <td id="logTotal" style="border-top:1px solid #ccc;padding:6px;text-align:center">0</td>
+            </tr>
+          </tfoot>
+        </table>
+        <div id="reaction" style="font-size:1.6rem;margin-top:8px" aria-live="polite">
+          <span id="reactionEmoji" aria-hidden="true"></span>
+          <span id="reactionText"></span>
+        </div>
+      </section>
+
+      <section>
+        <h2>📍 Your Location</h2>
+        <p id="locationStatus">Fetching location...</p>
+        <div id="map" style="width:100%;height:200px;border-radius:15px;"></div>
+
+        <!-- Recycling results / alternatives -->
+        <div id="recycleSection" style="margin-top:12px;text-align:left;">
+          <h3 style="margin:6px 0;display:flex;justify-content:space-between;align-items:center">♻️ Recycling Centers Nearby
+            <small style="font-size:0.8rem;color:#666">Radius: <select id="radiusSelect" style="margin-left:6px;padding:4px 6px;border-radius:6px;border:1px solid #ccc;background:#fff">
+              <option value="1000">1 km</option>
+              <option value="3000">3 km</option>
+              <option value="5000">5 km</option>
+              <option value="10000">10 km</option>
+            </select></small>
+          </h3>
+          <div id="recycleResults" style="background:#f6f9f8;padding:10px;border-radius:10px;min-height:56px;">
+            <p id="recycleStatus" style="margin:0;color:#555;display:flex;gap:8px;align-items:center;"><span class="spinner" aria-hidden="true"></span><span>Searching for nearby recycling centres...</span></p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>📅 Past Usage</h2>
+        <table>
+          <thead><tr><th>Date</th><th>Total Items</th></tr></thead>
+          <tbody id="historyTable"></tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>📈 Usage Graph</h2>
+        <canvas id="usageChart"></canvas>
+      </section>
+    </main>
+
+    <button id="logoutBtn" onclick="logout()">Logout</button>
+
+    <footer>
+      <p>♻️ Built for Sustainability | Daily Plastic Usage Tracker</p>
+    </footer>
+  </div>
+
+  <script>
+    let isRegistering = false;
+    let currentUser = null;
+    let userData = JSON.parse(localStorage.getItem("users")) || {};
+
+    window.addEventListener("DOMContentLoaded", () => {
+      const today = new Date();
+      const day = String(today.getDate()).padStart(2, "0");
+      const month = String(today.getMonth() + 1).padStart(2, "0");
+      const year = today.getFullYear();
+      document.getElementById("date").value = `${day}-${month}-${year}`;
+    });
+
+    function toggleAuth() {
+      isRegistering = !isRegistering;
+      document.getElementById("authTitle").textContent = isRegistering ? "📝 Register" : "🔑 Login";
+      document.getElementById("registerFields").style.display = isRegistering ? "block" : "none";
+      document.getElementById("authButton").textContent = isRegistering ? "Register" : "Login";
+      document.querySelector(".switch-link").textContent =
+        isRegistering ? "Already have an account? Login" : "Don't have an account? Register";
+    }
+
+    function makeEditable(select) {
+      if (select.value === "Other") {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.placeholder = "Type custom item...";
+        input.required = true;
+        input.style.width = "100%";
+        input.style.padding = "10px";
+        input.style.border = "1px solid #ccc";
+        input.style.borderRadius = "10px";
+        input.id = "item";
+        select.parentNode.replaceChild(input, select);
+        input.focus();
+      }
+    }
+
+    function createItemSelect() {
+      const sel = document.createElement("select");
+      sel.id = "item";
+      sel.required = true;
+      sel.onchange = function() { makeEditable(this); };
+      const opts = [
+        ['', '-- Select Item --'],
+        ['Bottle','Bottle'],
+        ['Bag','Bag'],
+        ['Cup','Cup'],
+        ['Straw','Straw'],
+        ['Other','Other']
+      ];
+      opts.forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = o[0]; opt.textContent = o[1];
+        sel.appendChild(opt);
+      });
+      return sel;
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const wrapper = document.getElementById('itemWrapper');
+      if (!wrapper) return;
+      wrapper.addEventListener('click', (ev) => {
+        const child = wrapper.firstElementChild;
+        if (child && child.tagName === 'INPUT' && ev.target !== child) {
+          wrapper.replaceChild(createItemSelect(), child);
+        }
+      });
+    });
+
+    function handleAuth() {
+      const email = document.getElementById("authEmail").value.trim();
+      const password = document.getElementById("authPassword").value.trim();
+
+      if (isRegistering) {
+        const name = document.getElementById("regName").value.trim();
+        if (!name || !email.endsWith("@gmail.com") || password.length < 4) {
+          alert("Please enter valid name, Gmail ID, and password (min 4 chars).");
+          return;
+        }
+        if (userData[email]) { alert("User already registered! Please login."); return; }
+        userData[email] = { name, email, password, history: [] };
+        localStorage.setItem("users", JSON.stringify(userData));
+        alert("Registration successful! Please log in.");
+        toggleAuth();
+      } else {
+        if (userData[email] && userData[email].password === password) {
+          currentUser = userData[email];
+          loginSuccess();
+        } else { alert("Invalid email or password. Register if new!"); }
+      }
+    }
+
+    function handleCredentialResponse(response) {
+      const data = parseJwt(response.credential);
+      currentUser = { name: data.name, email: data.email, picture: data.picture, history: userData[data.email]?.history || [] };
+      userData[data.email] = currentUser;
+      localStorage.setItem("users", JSON.stringify(userData));
+      loginSuccess();
+    }
+
+    function parseJwt(token) {
+      const base64Url = token.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      return JSON.parse(decodeURIComponent(atob(base64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')));
+    }
+
+    function loginSuccess() {
+      document.getElementById("authPage").style.display = "none";
+      document.getElementById("dashboard").style.display = "flex";
+      document.getElementById("welcomeText").textContent = `Welcome, ${currentUser.name}! Track your daily plastic usage.`;
+      renderUserData();
+      initLocation();
+    }
+
+    function logout() {
+      document.getElementById("dashboard").style.display = "none";
+      document.getElementById("authPage").style.display = "block";
+      currentUser = null;
+      document.getElementById("authEmail").value = "";
+      document.getElementById("authPassword").value = "";
+    }
+
+    const historyTable = document.getElementById("historyTable");
+    const usageForm = document.getElementById("usageForm");
+    const logBody = document.getElementById("logBody");
+    const logTotalDisplay = document.getElementById("logTotal");
+    let todayEntries = [];
+    const ctx = document.getElementById("usageChart").getContext("2d");
+
+    let usageChart = new Chart(ctx, {
+      type: "line",
+      data: { labels: [], datasets: [{ label: "Plastic Usage", data: [], borderColor: "#00796b", backgroundColor: "rgba(0,121,107,0.3)", fill: true, tension: 0.3 }] },
+      options: { responsive: true, scales: { y: { beginAtZero: true } } }
+    });
+
+    function renderUserData() {
+      const history = currentUser.history || [];
+      historyTable.innerHTML = "";
+      todayEntries = currentUser.todayEntries || [];
+      renderLogTable();
+
+      // Filter out entries that are ISO-format dates (YYYY-MM-DD) and any non-numeric totals.
+      // This hides rows like "2025-12-03" from the Past Usage table and chart.
+      const display = history.filter(entry => {
+        if (!entry || !entry.date) return false;
+        // hide ISO dates like 2025-12-03
+        if (/^\d{4}-\d{2}-\d{2}$/.test(entry.date)) return false;
+        const totalVal = Number(entry.total ?? entry.total_items);
+        return Number.isFinite(totalVal);
+      });
+
+      display.forEach(entry => {
+        const tr = document.createElement("tr");
+        const totalVal = Number(entry.total ?? entry.total_items ?? 0);
+        tr.innerHTML = `<td>${entry.date}</td><td>${totalVal}</td>`;
+        historyTable.appendChild(tr);
+      });
+
+      usageChart.data.labels = display.map(d => d.date);
+      usageChart.data.datasets[0].data = display.map(d => Number(d.total ?? d.total_items));
+      usageChart.update();
+    }
+
+    function renderLogTable(){
+      if(!logBody) return;
+      logBody.innerHTML = '';
+      let sum = 0;
+      todayEntries.forEach(entry => {
+        const tr = document.createElement('tr');
+        const tdItem = document.createElement('td'); tdItem.style.padding='6px'; tdItem.style.border='1px solid #eee'; tdItem.style.textAlign='left'; tdItem.textContent = entry.item;
+        const tdQty = document.createElement('td'); tdQty.style.padding='6px'; tdQty.style.border='1px solid #eee'; tdQty.style.textAlign='center'; tdQty.textContent = entry.quantity;
+        tr.appendChild(tdItem); tr.appendChild(tdQty);
+        logBody.appendChild(tr);
+        sum+=entry.quantity;
+      });
+      logTotalDisplay.textContent=sum;
+    }
+
+    // ====================== Image Detection Function ======================
+    async function detectImage() {
+      const imageInput = document.getElementById("image");
+      const detectionResults = document.getElementById("detectionResults");
+      const detectionContent = document.getElementById("detectionContent");
+      
+      if (!imageInput.files || imageInput.files.length === 0) {
+        alert("Please select an image first!");
+        return;
+      }
+
+      try {
+        // Show loading state
+        detectionResults.style.display = "block";
+        detectionContent.innerHTML = '<span class="spinner" aria-hidden="true"></span> Analyzing image with YOLO model...';
+        
+        // Create FormData with the image file
+        const formData = new FormData();
+        formData.append("file", imageInput.files[0]);
+        
+        // Backend URL - defaults to http://localhost:8000
+        const backendUrl = localStorage.getItem("backend_url") || "http://localhost:8000";
+        
+        // Send image to backend using fetch()
+        const response = await fetch(`${backendUrl}/predict`, {
+          method: "POST",
+          body: formData
+          // Note: Don't set Content-Type header - browser will set it automatically with boundary for FormData
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Backend error: ${response.status} ${response.statusText}`);
+        }
+        
+        // Parse JSON response
+        const result = await response.json();
+        console.log("YOLO Detection Results:", result);
+        
+        // Display detection results
+        if (result.detections && result.detections.length > 0) {
+          let html = '<div style="margin-bottom: 8px;"><strong>✅ Detected Items:</strong></div>';
+          result.detections.forEach((detection) => {
+            const confidencePercent = (detection.confidence * 100).toFixed(1);
+            html += `<div style="margin: 6px 0; padding: 8px; background: white; border-radius: 6px; border-left: 4px solid #00796b;">
+              <strong>${detection.label}</strong> 
+              <span style="color: #666; font-size: 0.9em;">(${confidencePercent}% confidence)</span>
+            </div>`;
+          });
+          detectionContent.innerHTML = html;
+          
+          // Auto-fill item field if empty and detection matches
+          const itemInput = document.getElementById("item");
+          if (itemInput.value === "" && result.detections.length > 0) {
+            const firstDetection = result.detections[0].label;
+            const select = itemInput;
+            if (select.tagName === "SELECT") {
+              const matchingOption = Array.from(select.options).find(opt => 
+                opt.value.toLowerCase() === firstDetection.toLowerCase()
+              );
+              if (matchingOption) {
+                select.value = matchingOption.value;
+              } else if (select.value === "") {
+                // Switch to "Other" and set the value
+                select.value = "Other";
+                makeEditable(select);
+                setTimeout(() => {
+                  const newInput = document.getElementById("item");
+                  if (newInput && newInput.tagName === "INPUT") {
+                    newInput.value = firstDetection;
+                  }
+                }, 100);
+              }
+            }
+          }
+        } else {
+          detectionContent.innerHTML = '<div style="color: #666;">No plastic items detected in the image. Try uploading a clearer image with visible plastic items.</div>';
+        }
+      } catch (error) {
+        console.error("Error uploading image:", error);
+        let errorMsg = "Failed to analyze image.";
+        
+        // Handle specific error cases
+        if (error.message.includes("Failed to fetch") || error.message.includes("CORS") || error.message.includes("NetworkError")) {
+          errorMsg = "⚠️ Cannot connect to backend server.\n\nMake sure:\n1. Backend is running: python backend/main.py\n2. Backend URL is correct: http://localhost:8000\n3. CORS is properly configured";
+        } else if (error.message.includes("Backend error")) {
+          errorMsg = `Backend error: ${error.message}`;
+        } else {
+          errorMsg = `Error: ${error.message}`;
+        }
+        
+        detectionContent.innerHTML = `<div style="color: #c62828; padding: 8px; background: #ffebee; border-radius: 6px; white-space: pre-line;">${errorMsg}</div>`;
+      }
+    }
+
+    // Attach detection button click handler
+    document.addEventListener("DOMContentLoaded", () => {
+      const detectBtn = document.getElementById("detectBtn");
+      if (detectBtn)
+       {
+        detectBtn.addEventListener("click", detectImage);
+       }
+    }
+  );
+
+    // ====================== Form Submit Handler ======================
+    // Helper: normalize date string to ISO YYYY-MM-DD for comparison
+    function toISO(dateStr) {
+      if (!dateStr) return null;
+      // DD-MM-YYYY -> YYYY-MM-DD
+      if (/^\d{2}-\d{2}-\d{4}$/.test(dateStr)) {
+        const [d,m,y] = dateStr.split('-');
+        return `${y}-${m}-${d}`;
+      }
+      // already ISO
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+      // fallback: try Date parse
+      const dt = new Date(dateStr);
+      if (!isNaN(dt)) {
+        const y = dt.getFullYear();
+        const m = String(dt.getMonth()+1).padStart(2,'0');
+        const d = String(dt.getDate()).padStart(2,'0');
+        return `${y}-${m}-${d}`;
+      }
+      return null;
+    }
+
+    usageForm.addEventListener("submit",(e)=>{
+      e.preventDefault();
+      const itemInput=document.getElementById("item");
+      const quantity=parseInt(document.getElementById("quantity").value, 10);
+      if(!itemInput.value || !Number.isFinite(quantity) || quantity < 1) return;
+
+      // add to today's items list (for the Today's Log table)
+      todayEntries.push({item:itemInput.value,quantity});
+      currentUser.todayEntries = todayEntries;
+
+      // Determine today's date strings
+      const now = new Date();
+      const dd = String(now.getDate()).padStart(2,'0');
+      const mm = String(now.getMonth()+1).padStart(2,'0');
+      const yyyy = now.getFullYear();
+      const todayDisplay = `${dd}-${mm}-${yyyy}`; // DD-MM-YYYY (store new entries this way)
+      const todayISO = `${yyyy}-${mm}-${dd}`;
+
+      // Ensure history exists
+      currentUser.history = currentUser.history || [];
+      const history = currentUser.history;
+
+      // Find an existing entry for today by normalized date (accepts DD-MM-YYYY or YYYY-MM-DD stored dates)
+      const idx = history.findIndex(en => {
+        const iso = toISO(en.date);
+        return iso === todayISO;
+      });
+
+      if (idx !== -1) {
+        // Update existing entry's total_items by adding quantity. Do NOT change its date.
+        const existing = history[idx];
+        const prev = Number(existing.total_items ?? existing.total ?? 0);
+        const updated = prev + quantity;
+        // Preserve original field name if present, but prefer `total_items` for future writes
+        existing.total_items = updated;
+        // Keep legacy `total` field in sync so rendering code that reads `total` shows updated value
+        existing.total = updated;
+      } else {
+        // No entry for today exists: append a new entry using DD-MM-YYYY and total_items
+        history.push({ date: todayDisplay, total_items: quantity, total: quantity });
+      }
+
+      // Persist users locally (local-first). Do not modify any other historical entries.
+      userData[currentUser.email] = currentUser;
+      localStorage.setItem("users",JSON.stringify(userData));
+
+      // Re-render today's log and the history/graph. The render function prepares graph data X=dates, Y=total_items.
+      renderLogTable();
+      renderUserData();
+
+      // Reset the form UI
+      usageForm.reset();
+      const wrapper = document.getElementById("itemWrapper");
+      wrapper.innerHTML = "";
+      wrapper.appendChild(createItemSelect());
+      document.getElementById("date").value = todayDisplay;
+
+      // Return / expose the complete usage history (all dates and totals) for downstream use
+      const fullHistory = currentUser.history.map(h => ({ date: h.date, total_items: Number(h.total_items ?? h.total ?? 0) }));
+      console.log('Full usage history after save:', fullHistory);
+      return fullHistory;
+    });
+
+    // ====================== GPS Functionality ======================
+    function initLocation() {
+      const statusEl = document.getElementById("locationStatus");
+      const mapEl = document.getElementById("map");
+
+      if (!navigator.geolocation) {
+        statusEl.textContent = "Geolocation is not supported by your browser.";
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          statusEl.textContent = `Latitude: ${lat.toFixed(5)}, Longitude: ${lng.toFixed(5)}`;
+
+          // Use OpenStreetMap + Overpass by default (no API key needed)
+          const radiusSelect = document.getElementById('radiusSelect');
+          const saved = localStorage.getItem('recycle_radius') || '3000';
+          if (radiusSelect) radiusSelect.value = saved;
+
+          const getRadius = () => parseInt(radiusSelect?.value || saved || '3000', 10);
+          if (radiusSelect) {
+            radiusSelect.addEventListener('change', () => { localStorage.setItem('recycle_radius', radiusSelect.value); loadLeafletAndSearch(mapEl, lat, lng, parseInt(radiusSelect.value, 10)); });
+          }
+
+          // Load OSM map and search immediately (no Google Maps dependency)
+          loadLeafletAndSearch(mapEl, lat, lng, getRadius());
+          return;
+
+          // Legacy: If Google Maps failed to load (kept for reference but skipped)
+          if (typeof window.google === 'undefined' || !window.google.maps) {
+            // Determine best available diagnostic
+            let reason = 'Unknown reason';
+            if (window._gm_auth_failure) reason = 'Authentication failure (API key, billing, or referer restrictions)';
+            else if (window._gm_load_error) reason = 'Script load failure (network blocked or script blocked by browser)';
+            else if (window._gm_inject_error) reason = 'Internal injector error while adding Maps script';
+
+            // Show plain coordinates and a friendly map-failed message with guidance
+            // include any captured Maps API error message if present
+            const detailed = window._gm_error_message ? `<div style="margin-top:8px;padding:8px;background:#fff;margin-top:8px;border-radius:8px;border:1px solid #f7e7e7;color:#7a2a2a">${window._gm_error_message}</div>` : '';
+            mapEl.innerHTML = `<div style="padding:12px;color:#a94442;background:#fff6f6;border-radius:8px;border:1px solid #f2dede">
+              ⚠️ Google Maps didn't load correctly.<br/>
+              <small style="color:#7a2a2a">Reason: ${reason}. Check the browser console for details.</small>
+              ${detailed}
+            </div>`;
+
+            // Try an OpenStreetMap + Overpass fallback so the feature still works without a Google key
+            const recycleResults = document.getElementById('recycleResults');
+            if (recycleResults) {
+              recycleResults.innerHTML = '<p style="margin:0;color:#555">'+reason+' — attempting OpenStreetMap fallback...</p>';
+            }
+
+            const getRadius = () => parseInt(radiusSelect?.value || saved || '3000', 10);
+            try {
+              loadLeafletAndSearch(mapEl, lat, lng, getRadius());
+            } catch (e) {
+              // If fallback fails, show simple alternatives and a link
+              if (recycleResults) {
+                recycleResults.innerHTML = '';
+                const alt = document.createElement('div');
+                alt.innerHTML = `
+                  <p style="margin:6px 0;color:#444"><strong>No map available, but we can still help.</strong></p>
+                  <p style="margin:6px 0;color:#444">${reason}. Here are some alternatives you can try:</p>
+                  <ul style="margin:6px 0 0 18px;color:#444">
+                    <li><strong>Open Google Maps:</strong> <a id="onlineSearch_noMap" href="" target="_blank">Search recycling centres near your location</a></li>
+                    <li><strong>Request municipal pickup:</strong> Check your city/town website for bulk recycling pickup.</li>
+                    <li><strong>Drop-off tips:</strong> Keep recyclables clean and dry; separate plastics by type if required.</li>
+                  </ul>
+                `;
+                recycleResults.appendChild(alt);
+                const link = document.getElementById('onlineSearch_noMap');
+                if (link) link.href = `https://www.google.com/maps/search/recycling+center/@${lat},${lng},12z`;
+              }
+            }
+
+            // still wire radius change to persist preference (re-run fallback search when changed)
+            if (radiusSelect) radiusSelect.addEventListener('change', () => { localStorage.setItem('recycle_radius', radiusSelect.value); loadLeafletAndSearch(mapEl, lat, lng, parseInt(radiusSelect.value,10)); });
+            return;
+          }
+
+          // Create the map and marker when Google Maps is available
+          const map = new google.maps.Map(mapEl, {
+            center: { lat, lng },
+            zoom: 15,
+          });
+
+          new google.maps.Marker({
+            position: { lat, lng },
+            map,
+            title: "You are here",
+          });
+
+          // Wire up radius preference (persisted) and then search for recycling centres near the user
+          if (radiusSelect) {
+            radiusSelect.addEventListener('change', () => {
+              localStorage.setItem('recycle_radius', radiusSelect.value);
+              searchRecycleCenters(map, lat, lng, getRadius());
+            });
+          }
+
+          try {
+            searchRecycleCenters(map, lat, lng, getRadius());
+          } catch (e) {
+            const rs = document.getElementById('recycleStatus');
+            if (rs) rs.textContent = 'Could not search for recycling centres (Places API unavailable). Try "Search online" below.';
+          }
+        },
+        (error) => {
+          switch(error.code) {
+            case error.PERMISSION_DENIED: statusEl.textContent="User denied the request for Geolocation."; break;
+            case error.POSITION_UNAVAILABLE: statusEl.textContent="Location information is unavailable."; break;
+            case error.TIMEOUT: statusEl.textContent="The request to get user location timed out."; break;
+            default: statusEl.textContent="An unknown error occurred."; break;
+          }
+        }
+      );
+    }
+
+    // Search nearby recycling centres using Places NearbySearch.
+    // If none found, show helpful alternatives and a 'Search wider area' button.
+    function searchRecycleCenters(map, lat, lng, radius) {
+      const recycleStatus = document.getElementById('recycleStatus');
+      const recycleResults = document.getElementById('recycleResults');
+      if (!recycleStatus || !recycleResults) return;
+      recycleStatus.innerHTML = '<span class="spinner" aria-hidden="true"></span>' + ' Looking for recycling centres within ' + Math.round(radius/1000*10)/10 + ' km...';
+
+      // If Places library not available, bail out with friendly fallback
+      if (typeof window.google === 'undefined' || !window.google.maps || !window.google.maps.places) {
+        recycleResults.innerHTML = '';
+        const alt = document.createElement('div');
+        alt.innerHTML = `
+          <p style="margin:6px 0;color:#444"><strong>Places search unavailable</strong></p>
+          <p style="margin:6px 0;color:#444">We couldn't run a nearby search because the Maps/Places library isn't available. You can:</p>
+          <ul style="margin:6px 0 0 18px;color:#444">
+            <li><a id="onlineSearch_noPlaces" href="#" target="_blank">Open Google Maps search for recycling centres near your coords</a></li>
+            <li>Check municipal recycling pages for pickup/drop-off details.</li>
+          </ul>
+        `;
+        recycleResults.appendChild(alt);
+        const link = document.getElementById('onlineSearch_noPlaces');
+        if (link) link.href = `https://www.google.com/maps/search/recycling+center/@${lat},${lng},10z`;
+        return;
+      }
+
+      const service = new google.maps.places.PlacesService(map);
+      const request = {
+        location: new google.maps.LatLng(lat, lng),
+        radius: radius,
+        keyword: 'recycling center|recycle|recycling drop-off|waste disposal'
+      };
+
+      service.nearbySearch(request, (results, status) => {
+        // Clear previous markers if any (simple approach: recreate map markers container)
+        recycleResults.innerHTML = '';
+
+        if (status === google.maps.places.PlacesServiceStatus.OK && results && results.length > 0) {
+          const ul = document.createElement('ul');
+          ul.style.listStyle = 'none'; ul.style.padding = '0';
+          results.slice(0,6).forEach(place => {
+            const li = document.createElement('li');
+            li.style.padding = '8px 6px';
+            li.innerHTML = `<strong>${place.name}</strong><br/><span style="font-size:0.9em;color:#444">${place.vicinity || ''}</span>`;
+            ul.appendChild(li);
+
+            // Add marker for each place
+            try {
+              new google.maps.Marker({
+                position: place.geometry.location,
+                map,
+                title: place.name,
+                icon: { url: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png' }
+              });
+            } catch (e) { /* ignore marker errors */ }
+          });
+          recycleResults.appendChild(ul);
+          const more = document.createElement('div'); more.style.marginTop='8px'; more.style.fontSize='0.9em'; more.style.color='#2e7d32'; more.textContent = `${results.length} centre(s) found nearby.`;
+          recycleResults.appendChild(more);
+          // quick action: open Google Maps search at center
+          const actions = document.createElement('div'); actions.className = 'actions';
+          const mapsLink = document.createElement('a');
+          mapsLink.className = 'btn-ghost';
+          mapsLink.textContent = 'Open in Google Maps';
+          mapsLink.href = `https://www.google.com/maps/search/recycling+center/@${lat},${lng},12z`;
+          mapsLink.target = '_blank';
+          actions.appendChild(mapsLink);
+          recycleResults.appendChild(actions);
+        } else {
+          // No results found - show helpful alternatives just like a GPS app would
+          const msg = document.createElement('div');
+          msg.innerHTML = `<p style="margin:0 0 8px 0;color:#a94442"><strong>No recycle centre nearby</strong></p>`;
+          const alt = document.createElement('div');
+          alt.innerHTML = `
+            <p style="margin:6px 0;color:#444"><strong>No recycling centres were found within ${Math.round(radius/1000*10)/10} km.</strong></p>
+            <p style="margin:6px 0;color:#444">Here are some alternatives:</p>
+            <ul style="margin:6px 0 0 18px;color:#444">
+              <li><strong>Search a wider area:</strong> <button id="widerBtn" class="btn-small">Search 10 km</button></li>
+              <li><strong>Search online:</strong> <a id="onlineSearch" href="#">Open Google Maps search</a></li>
+              <li><strong>Request municipal pickup:</strong> Check your city/town website for bulk recycling or hazardous waste pickup.</li>
+              <li><strong>Drop-off tips:</strong> Keep recyclables clean and dry; separate plastics by type if required.</li>
+              <li><strong>Mail-back programs:</strong> Some manufacturers and retailers offer mail-back recycling for certain plastics.</li>
+            </ul>
+          `;
+          recycleResults.appendChild(msg);
+          recycleResults.appendChild(alt);
+
+          // Wire up the wider search button and online search link
+          const btn = document.getElementById('widerBtn');
+          if (btn) {
+            btn.addEventListener('click', () => {
+              recycleResults.innerHTML = '<p style="margin:0;color:#555"><span class="spinner" aria-hidden="true"></span> Searching a wider area (10 km)...</p>';
+              // also set the radius selector so the UI reflects this
+              const sel = document.getElementById('radiusSelect'); if (sel) sel.value = '10000';
+              localStorage.setItem('recycle_radius', '10000');
+              searchRecycleCenters(map, lat, lng, 10000);
+            });
+          }
+          const online = document.getElementById('onlineSearch');
+          if (online) {
+            online.href = `https://www.google.com/maps/search/recycling+center/@${lat},${lng},10z`;
+            online.target = '_blank';
+          }
+        }
+      });
+    }
+
+
+
+    // Capture Google Maps API error messages from the console and surface them in the UI.
+    window.addEventListener('error', function (ev) {
+      try {
+        const msg = (ev && ev.message) || (ev && ev.error && ev.error.message) || '';
+        if (typeof msg === 'string' && msg.indexOf('Google Maps JavaScript API error') !== -1) {
+          window._gm_error_message = msg;
+          console.error('Captured Maps API error:', msg);
+          const mapEl = document.getElementById('map');
+          if (mapEl) {
+            const existing = mapEl.querySelector('.gm-error-detail');
+            if (!existing) {
+              const d = document.createElement('div');
+              d.className = 'gm-error-detail';
+              d.style.cssText = 'margin-top:8px;padding:8px;background:#fff;border-radius:8px;border:1px solid #f2e4e4;color:#7a2a2a;';
+              d.textContent = msg;
+              mapEl.appendChild(d);
+            }
+          }
+        }
+      } catch (e) { /* ignore */ }
+    });
+
+    // ---------------- OpenStreetMap / Overpass fallback ----------------
+    function loadLeafletAndSearch(mapEl, lat, lng, radius) {
+      // Dynamically load Leaflet CSS/JS if not present
+      function loadScript(url) {
+        return new Promise((resolve, reject) => {
+          const s = document.createElement('script'); s.src = url; s.async = true; s.defer = true;
+          s.onload = resolve; s.onerror = reject; document.head.appendChild(s);
+        });
+      }
+      function loadCSS(url) { const l = document.createElement('link'); l.rel='stylesheet'; l.href=url; document.head.appendChild(l); }
+
+      const recycleResults = document.getElementById('recycleResults');
+      if (recycleResults) recycleResults.innerHTML = '<p style="margin:0;color:#555"><span class="spinner" aria-hidden="true"></span> Searching using OpenStreetMap...</p>';
+
+      const ensureLeaflet = (window.L) ? Promise.resolve() : Promise.all([
+        (function(){ loadCSS('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'); return Promise.resolve(); })(),
+        loadScript('https://unpkg.com/leaflet@1.9.4/dist/leaflet.js')
+      ]);
+
+      ensureLeaflet.then(() => {
+        try {
+          // create map
+          mapEl.innerHTML = '';
+          const mapDiv = document.createElement('div'); mapDiv.style.width='100%'; mapDiv.style.height='200px'; mapDiv.style.borderRadius='15px'; mapEl.appendChild(mapDiv);
+          const map = L.map(mapDiv).setView([lat, lng], 13);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+          L.marker([lat,lng]).addTo(map).bindPopup('You are here').openPopup();
+
+          // Overpass query for recycling centres
+          const q = `[out:json][timeout:25];(node["amenity"="recycling"](around:${radius},${lat},${lng});node["recycling"="centre"](around:${radius},${lat},${lng});node["recycling"="collection_point"](around:${radius},${lat},${lng}););out center;`;
+          fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: q, headers: { 'Content-Type': 'text/plain' } })
+            .then(r=>r.json()).then(data => {
+              if (!data || !data.elements || data.elements.length === 0) {
+                if (recycleResults) {
+                  recycleResults.innerHTML = '';
+                  const msg = document.createElement('div');
+                  msg.innerHTML = `<p style="margin:0 0 6px 0;color:#a94442"><strong>No recycle centre nearby (OSM)</strong></p><div style="color:#444;font-size:0.95rem">No recycling locations were found via OpenStreetMap within ${Math.round(radius/1000*10)/10} km. Try a wider radius or learn more about recycling:</div>`;
+                  recycleResults.appendChild(msg);
+
+                  // Add YouTube videos section
+                  const vids = document.createElement('div');
+                  vids.innerHTML = `<div style="margin-top:10px;padding-top:10px;border-top:1px solid #e6efe9">
+                    <p style="margin:6px 0;font-weight:bold;color:#00796b">📹 Learn About Recycling</p>
+                    <ul style="margin:6px 0 0 18px;color:#444;font-size:0.95rem">
+                      <li><a href="https://www.youtube.com/results?search_query=how+to+recycle+plastic" target="_blank">How to Recycle Plastic Correctly</a></li>
+                      <li><a href="https://www.youtube.com/results?search_query=plastic+pollution+solutions" target="_blank">Plastic Pollution & Solutions</a></li>
+                      <li><a href="https://www.youtube.com/results?search_query=sustainable+living+tips" target="_blank">Sustainable Living Tips</a></li>
+                      <li><a href="https://www.youtube.com/results?search_query=zero+waste+lifestyle" target="_blank">Zero Waste Lifestyle Guide</a></li>
+                    </ul>
+                  </div>`;
+                  recycleResults.appendChild(vids);
+                }
+                return;
+              }
+              // show list and markers
+              if (recycleResults) recycleResults.innerHTML = '';
+              const ul = document.createElement('ul'); ul.style.listStyle='none'; ul.style.padding='0';
+              data.elements.slice(0,10).forEach(el => {
+                const name = el.tags && (el.tags.name || el.tags.operator) ? (el.tags.name || el.tags.operator) : '(recycling site)';
+                const latp = el.lat || (el.center && el.center.lat);
+                const lngp = el.lon || (el.center && el.center.lon);
+                const li = document.createElement('li'); li.style.padding='8px 6px'; li.style.borderBottom='1px solid #e6efe9'; li.innerHTML = `<strong>${name}</strong><br/><span style="font-size:0.9em;color:#444">${el.tags && el.tags.description ? el.tags.description : ''}</span>`;
+                ul.appendChild(li);
+                try { L.marker([latp, lngp]).addTo(map).bindPopup(name); } catch(e){}
+              });
+              if (recycleResults) recycleResults.appendChild(ul);
+            })
+            .catch(err => {
+              if (recycleResults) recycleResults.innerHTML = '<div style="color:#a94442">OpenStreetMap search failed. Please try again later.</div>';
+            });
+        } catch (e) {
+          if (recycleResults) recycleResults.innerHTML = '<div style="color:#a94442">OpenStreetMap fallback failed.</div>';
+        }
+      }).catch(err => {
+        if (recycleResults) recycleResults.innerHTML = '<div style="color:#a94442">Failed to load OpenStreetMap fallback resources.</div>';
+      });
+    }
+  </script>
+</body>
+</html>
